@@ -1,0 +1,64 @@
+from typing import List, Dict
+from Bio import Entrez
+import xml.etree.ElementTree as ET
+
+Entrez.email = "your.email@example.com"
+
+def fetch_papers(query: str, debug: bool=False) -> List[Dict]:
+    handle = Entrez.esearch(db="pubmed", term=query, retmax=10)
+    record = Entrez.read(handle)
+    ids = record['IdList']
+
+    if debug:
+        print(f"Found {len(ids)} papers.")
+
+    if not ids:
+        raise ValueError("No papers found for the given query.")
+
+    fetch_handle = Entrez.efetch(db="pubmed", id=ids, rettype="xml", retmode="xml")
+    records = Entrez.read(fetch_handle)
+
+    papers = []
+    for article in records['PubmedArticle']:
+        paper = parse_article(article)
+        papers.append(paper)
+    
+    return papers
+
+def parse_article(article) -> Dict:
+    medline = article['MedlineCitation']
+    article_info = medline['Article']
+
+    pmid = medline['PMID']
+    title = article_info['ArticleTitle']
+    pub_date = article_info.get('Journal', {}).get('JournalIssue', {}).get('PubDate', {}).get('Year', 'Unknown')
+
+    authors = []
+    affiliations = []
+    corresponding_emails = []
+
+    for author in article_info.get('AuthorList', []):
+        if 'AffiliationInfo' in author:
+            name = f"{author.get('LastName', '')} {author.get('ForeName', '')}".strip()
+            authors.append(name)
+            for aff in author['AffiliationInfo']:
+                aff_text = aff['Affiliation']
+                affiliations.append(aff_text)
+                # Extract emails from affiliation text (simple heuristic)
+                if '@' in aff_text:
+                    email = aff_text.split()[-1]
+                    if '@' in email:
+                        corresponding_emails.append(email.strip('.'))
+    
+    return {
+        "PubmedID": str(pmid),
+        "Title": title,
+        "Publication Date": pub_date,
+        "Non-academic Authors": "; ".join(authors),
+        "Company Affiliations": "; ".join([aff for aff in affiliations if is_company_affiliation(aff)]),
+        "Corresponding Author Email": "; ".join(corresponding_emails)
+    }
+
+def is_company_affiliation(affiliation: str) -> bool:
+    company_keywords = ["Inc", "Ltd", "LLC", "Company", "Corporation", "Pharmaceutical", "Biotech"]
+    return any(keyword in affiliation for keyword in company_keywords)
